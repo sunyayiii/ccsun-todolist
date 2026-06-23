@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>✨ 待办管理（外部版）</title>
+<title>✨ 待办管理（京东内部版）</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
 
@@ -160,9 +160,13 @@ body{font-family:'Noto Sans SC',-apple-system,BlinkMacSystemFont,'Segoe UI',sans
 .reminder-row input[type="datetime-local"]{height:34px;border:1px solid #e5e7eb;border-radius:8px;padding:0 8px;font-size:13px;font-family:inherit;outline:none;}
 .reminder-row input[type="datetime-local"]:focus{border-color:#667eea;}
 
-/* ── Contact/notification area (external: simplified) ── */
-.notification-info{font-size:12px;color:#6b7280;padding:8px 12px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;margin-top:6px;display:flex;align-items:center;gap:6px;}
-.notification-info .icon{font-size:14px;}
+.contact-grid{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
+.contact-chip{display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:12px;font-size:11px;cursor:pointer;background:#f3f4f6;color:#374151;border:1.5px solid transparent;transition:all .15s;user-select:none;}
+.contact-chip:hover{background:#e5e7eb;}
+.contact-chip.selected{background:#ede9fe;color:#5b21b6;border-color:#8b5cf6;font-weight:500;}
+.contact-chip input[type="checkbox"]{display:none;}
+.contact-actions{margin-top:6px;display:flex;gap:6px;}
+.contact-actions .detail-btn{font-size:10px;height:24px;padding:0 8px;}
 
 .detail-footer{display:flex;gap:8px;align-items:center;padding-top:10px;border-top:1px solid #e5e7eb;flex-wrap:wrap;}
 .detail-footer select{height:34px;border-radius:8px;border:1px solid #e5e7eb;padding:0 8px;font-size:12px;font-family:inherit;outline:none;}
@@ -459,7 +463,24 @@ body.sticky-pinned .container{margin-left:320px;margin-right:auto;max-width:min(
   </div>
 </div>
 
-<!-- ═══════ Contact Manager Modal (removed for external version) ═══════ -->
+<!-- ═══════ Contact Manager Modal ═══════ -->
+<div class="modal-overlay" id="contact-modal">
+  <div class="modal" style="max-width:450px;">
+    <div class="modal-header"><h3>👥 管理提醒联系人</h3><button class="modal-close" id="contact-close">&times;</button></div>
+    <div style="padding:16px;">
+      <div style="display:flex;gap:6px;margin-bottom:12px;">
+        <input id="new-contact-name" class="detail-input" placeholder="姓名/群名" style="flex:1;">
+        <input id="new-contact-erp" class="detail-input" placeholder="ERP/群号(群加group:前缀)" style="flex:1;">
+        <select id="new-contact-type" style="height:34px;border-radius:6px;border:1px solid #e5e7eb;font-size:12px;padding:0 4px;">
+          <option value="person">个人</option>
+          <option value="group">群</option>
+        </select>
+        <button class="detail-btn" onclick="addContact()">添加</button>
+      </div>
+      <div id="contact-manager-list" style="max-height:350px;overflow-y:auto;"></div>
+    </div>
+  </div>
+</div>
 
 <!-- ═══════ Tag Manager Modal ═══════ -->
 <div class="modal-overlay" id="tag-modal">
@@ -578,6 +599,7 @@ const STICKY_COLORS = [
    Application State
    ═══════════════════════════════════════════════ */
 var todos = [];
+var contacts = [];
 var selTag = '';
 var activeStatuses = new Set(['pending', 'doing']);
 var activeTagFilter = '';
@@ -954,6 +976,21 @@ function renderDetail(t) {
       + '</div>';
   }).join('');
 
+  /* Contact chips */
+  var selectedErps = (t.reminder_target || '').split(',').filter(Boolean);
+  var contactsHtml = '';
+  if (contacts && contacts.length > 0) {
+    contactsHtml = contacts.map(function(c) {
+      var sel = selectedErps.indexOf(c.erp) !== -1;
+      return '<span class="contact-chip' + (sel ? ' selected' : '') + '" data-erp="' + c.erp + '">'
+        + '<input type="checkbox" data-erp="' + c.erp + '"' + (sel ? ' checked' : '') + '> '
+        + esc(c.name)
+        + '</span>';
+    }).join('');
+  } else {
+    contactsHtml = '<span style="color:#bbb;font-size:11px;">加载中...</span>';
+  }
+
   /* Tag options */
   var tagOpts = '<option value=""' + (!t.tag ? ' selected' : '') + '>📁 未分类</option>';
   TAGS.forEach(function(tg) {
@@ -989,14 +1026,20 @@ function renderDetail(t) {
     + '</div>'
     + '</div>'
 
-    /* 提醒设置 (external: web notification only) */
+    /* 提醒设置 */
     + '<div class="detail-section">'
     + '<div class="detail-label">🔔 提醒设置</div>'
     + '<div class="reminder-row" style="margin-bottom:8px;">'
     + '<input type="datetime-local" data-role="reminder-time" data-id="' + t.id + '" value="' + (t.reminder || '') + '">'
     + '<button class="detail-btn" data-action="set-reminder" data-id="' + t.id + '">' + (t.reminder ? '🔔 已设置 | 修改' : '设置提醒') + '</button>'
     + '</div>'
-    + '<div class="notification-info"><span class="icon">🌐</span> 到时间后将通过浏览器通知提醒您（请确保已允许通知权限）</div>'
+    + '<div style="font-size:12px;color:#6b7280;margin-bottom:6px;">提醒对象（可多选）：</div>'
+    + '<div class="contact-grid" data-id="' + t.id + '">' + contactsHtml + '</div>'
+    + '<div class="contact-actions">'
+    + '<button class="detail-btn" data-action="select-all-contacts" data-id="' + t.id + '">全选</button>'
+    + '<button class="detail-btn" data-action="clear-all-contacts" data-id="' + t.id + '">清空</button>'
+    + '<button class="detail-btn" data-action="manage-contacts" style="margin-left:auto;">➕ 管理联系人</button>'
+    + '</div>'
     + '</div>'
 
     /* 操作 */
@@ -1096,7 +1139,7 @@ function wireDetailEvents() {
     };
   });
 
-  /* Set reminder (external: web notification only, no contacts) */
+  /* Set reminder */
   document.querySelectorAll('[data-action="set-reminder"]').forEach(function(el) {
     el.onclick = function() {
       var id = parseInt(el.dataset.id);
@@ -1104,8 +1147,47 @@ function wireDetailEvents() {
       var reminder_time = timeInp ? timeInp.value : '';
       if (!reminder_time) { showToast('⚠️', '请选择提醒时间'); return; }
 
-      updateField(id, {reminder_time: reminder_time, reminder_target: ''});
-      showToast('🔔', '网站提醒已设置，届时将通过浏览器通知您');
+      var grid = document.querySelector('.contact-grid[data-id="' + id + '"]');
+      var checked = grid ? Array.from(grid.querySelectorAll('input[type="checkbox"]:checked')).map(function(cb) { return cb.dataset.erp; }) : [];
+      var reminder_target = checked.join(',');
+
+      updateField(id, {reminder_time: reminder_time, reminder_target: reminder_target});
+      showToast('🔔', '提醒已设置' + (checked.length ? '，将通知 ' + checked.length + ' 人' : ''));
+    };
+  });
+
+  /* Contact chip toggle (use <span>, not <label>) */
+  document.querySelectorAll('.contact-chip').forEach(function(chip) {
+    chip.onclick = function() {
+      var cb = chip.querySelector('input[type="checkbox"]');
+      cb.checked = !cb.checked;
+      chip.classList.toggle('selected', cb.checked);
+    };
+  });
+
+  /* Select all contacts */
+  document.querySelectorAll('[data-action="select-all-contacts"]').forEach(function(el) {
+    el.onclick = function() {
+      var grid = document.querySelector('.contact-grid[data-id="' + el.dataset.id + '"]');
+      if (grid) {
+        grid.querySelectorAll('.contact-chip').forEach(function(c) {
+          c.classList.add('selected');
+          c.querySelector('input').checked = true;
+        });
+      }
+    };
+  });
+
+  /* Clear all contacts */
+  document.querySelectorAll('[data-action="clear-all-contacts"]').forEach(function(el) {
+    el.onclick = function() {
+      var grid = document.querySelector('.contact-grid[data-id="' + el.dataset.id + '"]');
+      if (grid) {
+        grid.querySelectorAll('.contact-chip').forEach(function(c) {
+          c.classList.remove('selected');
+          c.querySelector('input').checked = false;
+        });
+      }
     };
   });
 
@@ -1128,6 +1210,10 @@ function wireDetailEvents() {
     el.onclick = function() {
       deleteTodo(parseInt(el.dataset.id));
     };
+  });
+
+  document.querySelectorAll('[data-action="manage-contacts"]').forEach(function(el) {
+    el.onclick = function() { showContactManager(); };
   });
 
   document.querySelectorAll('[data-action="upload-file"]').forEach(function(el) {
@@ -1391,6 +1477,52 @@ $('summary-btn').onclick = function() {
 $('summary-close').onclick = function() { $('summary-modal').classList.remove('show'); };
 $('summary-modal').onclick = function(e) { if (e.target === $('summary-modal')) $('summary-modal').classList.remove('show'); };
 
+/* Contact Manager */
+$('contact-close').onclick = function() { $('contact-modal').classList.remove('show'); };
+$('contact-modal').onclick = function(e) { if (e.target === $('contact-modal')) $('contact-modal').classList.remove('show'); };
+
+function showContactManager() {
+  $('contact-modal').classList.add('show');
+  renderContactList();
+}
+
+function renderContactList() {
+  var list = $('contact-manager-list');
+  if (!contacts || contacts.length === 0) {
+    list.innerHTML = '<div style="color:#bbb;text-align:center;padding:20px;">暂无联系人</div>';
+    return;
+  }
+  list.innerHTML = contacts.map(function(c) {
+    var icon = c.type === 'group' ? '👥' : '👤';
+    return '<div style="display:flex;align-items:center;gap:8px;padding:8px;border-bottom:1px solid #f0f0f0;">'
+      + '<span style="font-size:13px;">' + icon + ' ' + esc(c.name) + '</span>'
+      + '<span style="font-size:11px;color:#999;flex:1;">' + esc(c.erp) + '</span>'
+      + '<button style="border:none;background:transparent;color:#ccc;cursor:pointer;font-size:14px;" onclick="removeContact(\'' + c.erp.replace(/'/g, "\\'") + '\')">&times;</button>'
+      + '</div>';
+  }).join('');
+}
+
+async function addContact() {
+  var name = $('new-contact-name').value.trim();
+  var erp = $('new-contact-erp').value.trim();
+  var type = $('new-contact-type').value;
+  if (!name || !erp) { showToast('⚠️', '请填写姓名和ERP/群号'); return; }
+  if (type === 'group' && !erp.startsWith('group:')) erp = 'group:' + erp;
+  await postJSON('/api/add-contact', {name: name, erp: erp, type: type});
+  $('new-contact-name').value = '';
+  $('new-contact-erp').value = '';
+  contacts = await (await fetch('/api/contacts', {credentials: 'same-origin'})).json();
+  renderContactList();
+  showToast('✅', '已添加 ' + name);
+}
+
+async function removeContact(erp) {
+  await postJSON('/api/remove-contact', {erp: erp});
+  contacts = await (await fetch('/api/contacts', {credentials: 'same-origin'})).json();
+  renderContactList();
+  showToast('🗑', '已删除');
+}
+
 /* Range buttons */
 $('range-btns').onclick = function(e) {
   var btn = e.target.closest('.modal-range-btn');
@@ -1516,7 +1648,7 @@ async function loadReminders() {
           : '<span style="color:#667eea;font-size:10px;">⏳ 等待中</span>');
 
       var timeStr = r.reminder.replace('T', ' ');
-      var targetsStr = '<span style="color:#667eea;">🌐 网站通知</span>';
+      var targetsStr = (r.targets && r.targets.length > 0) ? '👥 ' + r.targets.join(', ') : '🙋 自己';
       var noteStr = r.note ? '<div class="reminder-card-note">📝 ' + esc(r.note) + '</div>' : '';
 
       return '<div class="' + cls + '">'
@@ -1873,6 +2005,7 @@ async function doLogout() {
     await fetch('/api/logout', {method:'POST', credentials:'same-origin'});
   } catch(e) {}
   todos = [];
+  contacts = [];
   currentUser = null;
   showLogin();
 }
@@ -1888,6 +2021,15 @@ function initApp() {
   loadTags();
   fetchTodos();
   checkAiConfig();
+
+  fetch('/api/contacts', {credentials: 'same-origin'}).then(function(r) {
+    if (r.status === 401) { showLogin(); return Promise.reject('unauthorized'); }
+    return r.json();
+  }).then(function(d) {
+    contacts = d;
+  }).catch(function() {
+    contacts = [];
+  });
 
   loadReminders();
   $('inp').focus();

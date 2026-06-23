@@ -1307,6 +1307,85 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 # ─────────────────────────── Entry point ────────────────────────────
 
+# ─── GitHub Auto-Sync (data persistence) ───
+GITHUB_SYNC_INTERVAL = int(os.environ.get("SYNC_INTERVAL", "600"))  # default 10 minutes
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "")  # e.g. "sunyayiii/ccsun-todolist"
+GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
+
+
+def _github_sync_loop():
+    """Background thread: periodically push data/ to GitHub via git commands."""
+    import subprocess
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        print("[Sync] GITHUB_TOKEN or GITHUB_REPO not set, auto-sync disabled.")
+        return
+
+    # Configure git for the container
+    remote_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
+
+    while True:
+        time.sleep(GITHUB_SYNC_INTERVAL)
+        try:
+            # Check if data dir has any files
+            if not os.path.isdir(DATA_DIR) or not os.listdir(DATA_DIR):
+                continue
+
+            env = os.environ.copy()
+            env["GIT_AUTHOR_NAME"] = "TodoBot"
+            env["GIT_AUTHOR_EMAIL"] = "bot@ccsun-todo.app"
+            env["GIT_COMMITTER_NAME"] = "TodoBot"
+            env["GIT_COMMITTER_EMAIL"] = "bot@ccsun-todo.app"
+
+            cwd = TODO_DIR
+
+            # Initialize git if needed (fresh container)
+            if not os.path.isdir(os.path.join(cwd, ".git")):
+                subprocess.run(["git", "init"], cwd=cwd, env=env,
+                               capture_output=True, timeout=30)
+                subprocess.run(["git", "remote", "add", "origin", remote_url],
+                               cwd=cwd, env=env, capture_output=True, timeout=30)
+                subprocess.run(["git", "fetch", "origin", GITHUB_BRANCH],
+                               cwd=cwd, env=env, capture_output=True, timeout=60)
+                subprocess.run(["git", "checkout", "-B", GITHUB_BRANCH,
+                                f"origin/{GITHUB_BRANCH}"],
+                               cwd=cwd, env=env, capture_output=True, timeout=30)
+            else:
+                # Update remote URL in case token changed
+                subprocess.run(["git", "remote", "set-url", "origin", remote_url],
+                               cwd=cwd, env=env, capture_output=True, timeout=10)
+
+            # Stage only the data directory
+            subprocess.run(["git", "add", "data/"], cwd=cwd, env=env,
+                           capture_output=True, timeout=30)
+
+            # Check if there are changes to commit
+            diff_result = subprocess.run(
+                ["git", "diff", "--cached", "--quiet"],
+                cwd=cwd, env=env, capture_output=True, timeout=10
+            )
+            if diff_result.returncode == 0:
+                # No changes
+                continue
+
+            # Commit and push
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            subprocess.run(
+                ["git", "commit", "-m", f"[auto-sync] data backup {ts}"],
+                cwd=cwd, env=env, capture_output=True, timeout=30
+            )
+            push_result = subprocess.run(
+                ["git", "push", "origin", GITHUB_BRANCH],
+                cwd=cwd, env=env, capture_output=True, timeout=60
+            )
+            if push_result.returncode == 0:
+                print(f"[Sync] Data pushed to GitHub at {ts}")
+            else:
+                print(f"[Sync] Push failed: {push_result.stderr.decode()[:200]}")
+
+        except Exception as e:
+            print(f"[Sync] Error: {e}")
+
 
 class ThreadedServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
@@ -1314,6 +1393,10 @@ class ThreadedServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 if __name__ == "__main__":
+    # Start GitHub sync background thread
+    sync_thread = threading.Thread(target=_github_sync_loop, daemon=True)
+    sync_thread.start()
+
     server = ThreadedServer(("0.0.0.0", PORT), Handler)
     print("待办管理启动: http://0.0.0.0:{}".format(PORT))
     # Only open browser locally (not on cloud deploy)

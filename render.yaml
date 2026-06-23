@@ -7,5 +7,13 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11"
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_REPO
+        value: "sunyayiii/ccsun-todolist"
+      - key: GITHUB_BRANCH
+        value: "main"
+      - key: SYNC_INTERVAL
+        value: "600"
     plan: free
     autoDeploy: true
