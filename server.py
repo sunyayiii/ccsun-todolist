@@ -22,7 +22,7 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-PORT = 19101
+PORT = int(os.environ.get("PORT", 19101))
 TODO_DIR = os.path.dirname(os.path.abspath(__file__))
 HTML_PATH = os.path.join(TODO_DIR, "index.html")
 DATA_PATH = os.path.join(TODO_DIR, "todos.json")
@@ -1314,11 +1314,12 @@ class ThreadedServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 if __name__ == "__main__":
-    import webbrowser
-
     server = ThreadedServer(("0.0.0.0", PORT), Handler)
-    print("待办管理启动: http://127.0.0.1:{}".format(PORT))
-    webbrowser.open("http://127.0.0.1:{}".format(PORT))
+    print("待办管理启动: http://0.0.0.0:{}".format(PORT))
+    # Only open browser locally (not on cloud deploy)
+    if not os.environ.get("RENDER") and not os.environ.get("PORT"):
+        import webbrowser
+        webbrowser.open("http://127.0.0.1:{}".format(PORT))
     try:
         server.serve_forever()
     except KeyboardInterrupt:

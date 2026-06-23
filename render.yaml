@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: ccsun-todolist
+    runtime: python
+    buildCommand: echo "No build needed"
+    startCommand: python3 server.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+    plan: free
+    autoDeploy: true
