@@ -8,12 +8,21 @@ to work safely with ThreadingMixIn.
 
 import json
 import os
+import subprocess
+import sys
 import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-import psycopg2
-from psycopg2.extras import RealDictCursor
+# Auto-install psycopg2-binary if missing (handles Render's cached builds)
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+except ImportError:
+    print("[DB] psycopg2 not found, installing...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "psycopg2-binary"])
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
