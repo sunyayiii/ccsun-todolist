@@ -233,6 +233,7 @@ def _default_todo_fields(partial: Dict[str, Any]) -> Dict[str, Any]:
         "starred": False,
         "reminder": None,
         "reminder_target": "",
+        "deadline": None,
         "progress": [],
         "attachments": [],
     }
@@ -251,6 +252,7 @@ def load_todos(username=None) -> List[Dict[str, Any]]:
                 t.setdefault("starred", False)
                 t.setdefault("reminder", None)
                 t.setdefault("reminder_target", "")
+                t.setdefault("deadline", None)
                 t.setdefault("progress", [])
                 t.setdefault("attachments", [])
             return todos
@@ -266,6 +268,7 @@ def load_todos(username=None) -> List[Dict[str, Any]]:
                 t.setdefault("starred", False)
                 t.setdefault("reminder", None)
                 t.setdefault("reminder_target", "")
+                t.setdefault("deadline", None)
                 t.setdefault("progress", [])
                 t.setdefault("attachments", [])
             save_todos(todos)
@@ -484,6 +487,7 @@ def generate_excel_bytes(todos: List[Dict[str, Any]]) -> Optional[bytes]:
             "进度": status_map.get(t.get("status", "pending"), "未启动"),
             "情况备注": t.get("note", ""),
             "开始时间": t.get("date", ""),
+            "截止日期": t.get("deadline", "") or "",
             "重点": "是" if t.get("starred") else "",
             "提醒时间": t.get("reminder", "") or "",
         })
@@ -966,6 +970,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "starred": body.get("starred", False),
             "reminder": body.get("reminder"),
             "reminder_target": body.get("reminder_target", ""),
+            "deadline": body.get("deadline"),
         })
         todos.insert(0, todo)
         save_todos(todos, user)
@@ -1028,7 +1033,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # Clean up legacy field
         body.pop("reminder_target_id", None)
 
-        allowed = {"text", "tag", "status", "note", "starred", "reminder", "reminder_target"}
+        allowed = {"text", "tag", "status", "note", "starred", "reminder", "reminder_target", "deadline"}
         todos = load_todos(user)
         found = False
         for t in todos:

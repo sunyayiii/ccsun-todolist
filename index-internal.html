@@ -141,6 +141,10 @@ body{font-family:'Noto Sans SC',-apple-system,BlinkMacSystemFont,'Segoe UI',sans
 .s-delayed{background:#fef3c7;color:#92400e;}
 .s-done{background:#dcfce7;color:#166534;}
 .item-reminder{font-size:10px;}
+.deadline-badge{font-size:10px;padding:1px 7px;border-radius:8px;font-weight:500;}
+.deadline-overdue{background:#fee2e2;color:#dc2626;}
+.deadline-soon{background:#fff7ed;color:#ea580c;}
+.deadline-normal{background:#f3f4f6;color:#9ca3af;}
 
 /* ── Detail panel (accordion) ── */
 .detail-panel{max-height:0;overflow:hidden;transition:max-height .35s ease,padding .35s ease;background:#f9fafb;border-top:1px solid #f0f0f5;}
@@ -800,6 +804,20 @@ function sortItems(items) {
 }
 
 /* ═══════════════════════════════════════════════
+   Deadline Helper
+   ═══════════════════════════════════════════════ */
+function getDeadlineStatus(deadline) {
+  if (!deadline) return null;
+  var now = new Date();
+  now.setHours(0,0,0,0);
+  var dl = new Date(deadline + 'T00:00:00');
+  var diff = (dl - now) / (1000*60*60*24);
+  if (diff < 0) return 'overdue';
+  if (diff <= 2) return 'soon';
+  return 'normal';
+}
+
+/* ═══════════════════════════════════════════════
    Search
    ═══════════════════════════════════════════════ */
 function onSearchInput() {
@@ -979,6 +997,13 @@ function renderItem(t) {
   };
   var statusBadge = statusMap[t.status] || '';
   var reminderH = t.reminder ? '<span class="item-reminder">🔔</span>' : '';
+  var deadlineH = '';
+  if (t.deadline && t.status !== 'done') {
+    var dlStatus = getDeadlineStatus(t.deadline);
+    if (dlStatus === 'overdue') deadlineH = '<span class="deadline-badge deadline-overdue">⚠️ 已超期</span>';
+    else if (dlStatus === 'soon') deadlineH = '<span class="deadline-badge deadline-soon">⏰ 即将超期</span>';
+    else deadlineH = '<span class="deadline-badge deadline-normal">📅 ' + t.deadline + '</span>';
+  }
   var starText = t.starred ? '⭐' : '☆';
   var isOpen = expandedId === t.id;
 
@@ -989,7 +1014,7 @@ function renderItem(t) {
     + '<button class="star-btn" data-action="star" data-id="' + t.id + '" data-starred="' + (t.starred ? '1' : '0') + '">' + starText + '</button>'
     + '<div class="item-body" data-action="expand" data-id="' + t.id + '">'
     + '<div class="item-text">' + esc(t.text) + '</div>'
-    + '<div class="item-meta">' + tagH + statusBadge + '<span class="item-date">' + (t.date || '') + '</span>' + reminderH + '</div>'
+    + '<div class="item-meta">' + tagH + statusBadge + '<span class="item-date">' + (t.date || '') + '</span>' + deadlineH + reminderH + '</div>'
     + '</div>'
     + '</div>'
     + '<div class="detail-panel' + (isOpen ? ' open' : '') + '" data-detail="' + t.id + '">'
@@ -1066,6 +1091,17 @@ function renderDetail(t) {
     + '<button class="detail-btn" data-action="add-attach" data-id="' + t.id + '">添加链接</button>'
     + '<label class="detail-btn" style="cursor:pointer;background:#f59e0b;color:#fff;">📎 上传文件<input type="file" data-action="upload-file" data-id="' + t.id + '" style="display:none;"></label>'
     + '</div>'
+    + '</div>'
+
+    /* 截止日期 */
+    + '<div class="detail-section">'
+    + '<div class="detail-label">📅 截止日期</div>'
+    + '<div style="display:flex;gap:6px;align-items:center;">'
+    + '<input type="date" data-role="deadline-date" data-id="' + t.id + '" value="' + (t.deadline || '') + '" style="height:34px;border:1px solid #e5e7eb;border-radius:8px;padding:0 10px;font-size:13px;font-family:inherit;outline:none;">'
+    + '<button class="detail-btn" data-action="set-deadline" data-id="' + t.id + '">' + (t.deadline ? '已设置 | 修改' : '设置截止日期') + '</button>'
+    + (t.deadline ? '<button class="detail-btn danger" data-action="clear-deadline" data-id="' + t.id + '">清除</button>' : '')
+    + '</div>'
+    + (t.deadline ? '<div style="font-size:11px;color:#9ca3af;margin-top:4px;">当前截止日期：' + t.deadline + '</div>' : '')
     + '</div>'
 
     /* 提醒设置 */
@@ -1178,6 +1214,27 @@ function wireDetailEvents() {
   document.querySelectorAll('[data-action="remove-attach"]').forEach(function(el) {
     el.onclick = function() {
       removeAttachment(parseInt(el.dataset.id), parseInt(el.dataset.index));
+    };
+  });
+
+  /* Set deadline */
+  document.querySelectorAll('[data-action="set-deadline"]').forEach(function(el) {
+    el.onclick = function() {
+      var id = parseInt(el.dataset.id);
+      var dateInp = document.querySelector('[data-role="deadline-date"][data-id="' + id + '"]');
+      var deadline = dateInp ? dateInp.value : '';
+      if (!deadline) { showToast('⚠️', '请选择截止日期'); return; }
+      updateField(id, {deadline: deadline});
+      showToast('📅', '截止日期已设置：' + deadline);
+    };
+  });
+
+  /* Clear deadline */
+  document.querySelectorAll('[data-action="clear-deadline"]').forEach(function(el) {
+    el.onclick = function() {
+      var id = parseInt(el.dataset.id);
+      updateField(id, {deadline: null});
+      showToast('📅', '截止日期已清除');
     };
   });
 
