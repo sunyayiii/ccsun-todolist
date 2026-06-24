@@ -15,5 +15,9 @@ services:
         value: "main"
       - key: SYNC_INTERVAL
         value: "600"
+      - key: DATABASE_URL
+        sync: false
+      - key: MIGRATE_JSON_TO_DB
+        sync: false
     plan: free
     autoDeploy: true

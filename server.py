@@ -284,6 +284,33 @@ def next_id(todos: List[Dict[str, Any]]) -> int:
     return max((t.get("id", 0) for t in todos), default=0) + 1
 
 
+# ─────────────────────────── DB Shim (Supabase PostgreSQL) ─────────────
+_USE_DB = bool(os.environ.get("DATABASE_URL"))
+if _USE_DB:
+    from db import (
+        init_db, migrate_json_to_db, export_db_to_json,
+        db_load_users, db_save_users,
+        db_load_todos, db_save_todos,
+        db_load_tags, db_save_tags,
+        db_load_contacts, db_save_contacts,
+        db_save_upload, db_load_upload,
+    )
+    init_db()
+    # One-time migration from JSON → DB
+    if os.environ.get("MIGRATE_JSON_TO_DB") == "1":
+        migrate_json_to_db(DATA_DIR)
+        print("[DB] Migration complete. Remove MIGRATE_JSON_TO_DB env var now.")
+    # Replace module-level data functions
+    load_users = db_load_users
+    save_users = db_save_users
+    load_todos = db_load_todos
+    save_todos = db_save_todos
+    load_tags = db_load_tags
+    save_tags = db_save_tags
+    load_contacts = db_load_contacts
+    save_contacts = db_save_contacts
+
+
 # ─────────────────────────── AI helpers ─────────────────────────────
 
 
@@ -734,6 +761,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             filepath = os.path.join(user_uploads_dir(user), filename)
             if os.path.isfile(filepath):
                 self._serve_upload(filepath)
+            elif _USE_DB:
+                # Try loading from database
+                result = db_load_upload(user, filename)
+                if result:
+                    mime_type, file_data = result
+                    self.send_response(200)
+                    self.send_header("Content-Type", mime_type)
+                    self.send_header("Content-Length", str(len(file_data)))
+                    self._cors_headers()
+                    self.end_headers()
+                    self.wfile.write(file_data)
+                else:
+                    self.send_error(404)
             else:
                 self.send_error(404)
 
@@ -1114,6 +1154,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 with open(filepath, 'wb') as f:
                     f.write(file_data)
 
+                # Also persist to database if available
+                if _USE_DB:
+                    import mimetypes
+                    mime, _ = mimetypes.guess_type(safe_name)
+                    if mime is None:
+                        mime = "application/octet-stream"
+                    try:
+                        db_save_upload(user, safe_name, mime, file_data)
+                    except Exception as e:
+                        print(f"[DB] Warning: upload save failed: {e}")
+
                 self._json_resp({"ok": True, "filename": safe_name, "url": f"/uploads/{safe_name}"})
                 return
 
@@ -1315,7 +1366,11 @@ GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
 
 
 def _github_sync_loop():
-    """Background thread: periodically push data/ to GitHub via git commands."""
+    """Background thread: periodically push data/ to GitHub via git commands.
+
+    When _USE_DB is True, exports DB content to JSON before each push cycle,
+    so GitHub always has a fresh snapshot for backup purposes.
+    """
     import subprocess
     if not GITHUB_TOKEN or not GITHUB_REPO:
         print("[Sync] GITHUB_TOKEN or GITHUB_REPO not set, auto-sync disabled.")
@@ -1323,37 +1378,49 @@ def _github_sync_loop():
 
     # Configure git for the container
     remote_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
+    env = os.environ.copy()
+    env["GIT_AUTHOR_NAME"] = "TodoBot"
+    env["GIT_AUTHOR_EMAIL"] = "bot@ccsun-todo.app"
+    env["GIT_COMMITTER_NAME"] = "TodoBot"
+    env["GIT_COMMITTER_EMAIL"] = "bot@ccsun-todo.app"
+    cwd = TODO_DIR
 
+    # ── Initial git setup (run once at startup) ──
+    try:
+        if not os.path.isdir(os.path.join(cwd, ".git")):
+            subprocess.run(["git", "init"], cwd=cwd, env=env,
+                           capture_output=True, timeout=30)
+            subprocess.run(["git", "remote", "add", "origin", remote_url],
+                           cwd=cwd, env=env, capture_output=True, timeout=30)
+        else:
+            subprocess.run(["git", "remote", "set-url", "origin", remote_url],
+                           cwd=cwd, env=env, capture_output=True, timeout=10)
+
+        # Always pull latest on startup to get any manual fixes
+        subprocess.run(["git", "fetch", "origin", GITHUB_BRANCH],
+                       cwd=cwd, env=env, capture_output=True, timeout=60)
+        subprocess.run(["git", "checkout", "-B", GITHUB_BRANCH,
+                        f"origin/{GITHUB_BRANCH}"],
+                       cwd=cwd, env=env, capture_output=True, timeout=30)
+        print("[Sync] Initial git pull complete.")
+    except Exception as e:
+        print(f"[Sync] Initial git setup error: {e}")
+
+    # ── Periodic sync loop ──
     while True:
         time.sleep(GITHUB_SYNC_INTERVAL)
         try:
+            # If using DB, export data to JSON files first
+            if _USE_DB:
+                try:
+                    from db import export_db_to_json
+                    export_db_to_json(DATA_DIR)
+                except Exception as e:
+                    print(f"[Sync] DB export error: {e}")
+
             # Check if data dir has any files
             if not os.path.isdir(DATA_DIR) or not os.listdir(DATA_DIR):
                 continue
-
-            env = os.environ.copy()
-            env["GIT_AUTHOR_NAME"] = "TodoBot"
-            env["GIT_AUTHOR_EMAIL"] = "bot@ccsun-todo.app"
-            env["GIT_COMMITTER_NAME"] = "TodoBot"
-            env["GIT_COMMITTER_EMAIL"] = "bot@ccsun-todo.app"
-
-            cwd = TODO_DIR
-
-            # Initialize git if needed (fresh container)
-            if not os.path.isdir(os.path.join(cwd, ".git")):
-                subprocess.run(["git", "init"], cwd=cwd, env=env,
-                               capture_output=True, timeout=30)
-                subprocess.run(["git", "remote", "add", "origin", remote_url],
-                               cwd=cwd, env=env, capture_output=True, timeout=30)
-                subprocess.run(["git", "fetch", "origin", GITHUB_BRANCH],
-                               cwd=cwd, env=env, capture_output=True, timeout=60)
-                subprocess.run(["git", "checkout", "-B", GITHUB_BRANCH,
-                                f"origin/{GITHUB_BRANCH}"],
-                               cwd=cwd, env=env, capture_output=True, timeout=30)
-            else:
-                # Update remote URL in case token changed
-                subprocess.run(["git", "remote", "set-url", "origin", remote_url],
-                               cwd=cwd, env=env, capture_output=True, timeout=10)
 
             # Stage only the data directory
             subprocess.run(["git", "add", "data/"], cwd=cwd, env=env,
