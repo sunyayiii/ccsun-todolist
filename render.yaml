@@ -3,7 +3,7 @@ services:
     name: ccsun-todolist
     runtime: python
     buildCommand: pip install --no-cache-dir -r requirements.txt
-    startCommand: python3 server.py
+    startCommand: pip install psycopg2-binary && python3 server.py
     envVars:
       - key: PYTHON_VERSION
         value: "3.11"
